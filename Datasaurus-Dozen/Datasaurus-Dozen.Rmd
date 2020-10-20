@@ -1,0 +1,154 @@
+---
+title:  "Datasaurus Dozen"
+author: "Machiel Visser"
+date:   "20/10/2020"
+output: rmarkdown::github_document
+always_allow_html: true
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      dpi = 180, fig.width = 8, fig.height = 5,
+                      fig.path = "Datasaurus-Dozen-figs/DD-")
+```
+
+
+## Load packages and set theme
+
+```{r}
+library(knitr)
+library(tidyverse)
+library(tidytuesdayR)
+library(tidymodels)
+library(foreach)
+library(doParallel)
+
+theme_set(theme_light())
+```
+
+
+## Download data
+
+```{r}
+tuesdata <- tidytuesdayR::tt_load('2020-10-13')
+(datasaurus <- tuesdata$datasaurus)
+```
+
+
+## Plot datasets
+
+```{r}
+datasaurus %>% 
+  filter(dataset == "dino") %>% 
+  ggplot(aes(x, y)) +
+  geom_point(show.legend = FALSE)
+```
+
+```{r}
+datasaurus %>% 
+  filter(dataset != "dino") %>% 
+  ggplot(aes(x, y, colour = dataset)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~ dataset, ncol = 4) +
+  theme_minimal()
+```
+
+
+## Summary statistics
+
+```{r}
+datasaurus %>% 
+    group_by(dataset) %>% 
+    summarize(x_mean  = mean(x),
+              y_mean  = mean(y),
+              x_sd    = sd(x),
+              y_sd    = sd(y),
+              cor_x_y = cor(x, y))
+```
+
+
+## YouTube Screencast by Julia Silge
+
+https://www.youtube.com/watch?v=QhAPA_X-ilA
+
+
+### Build a classification model
+
+```{r}
+set.seed(1234)
+dino_folds <- datasaurus %>% 
+  mutate(dataset = factor(dataset)) %>% 
+  bootstraps()
+
+dino_folds
+```
+
+```{r}
+rf_spec <- rand_forest(trees = 1000) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger")
+
+rf_spec
+```
+
+```{r}
+dino_wf <- workflow() %>% 
+  add_model(rf_spec) %>% 
+  add_formula(dataset ~ x + y)
+
+dino_wf
+```
+
+```{r}
+doParallel::registerDoParallel()
+dino_rs <- fit_resamples(dino_wf,
+                         resamples = dino_folds,
+                         control = control_resamples(save_pred = TRUE))
+
+dino_rs
+```
+
+
+### Evaluate classification model
+
+```{r}
+collect_metrics(dino_rs)
+```
+
+```{r}
+dino_rs %>% 
+  collect_predictions() %>% 
+  group_by(id) %>% 
+  ppv(dataset, .pred_class)
+```
+
+```{r}
+dino_rs %>% 
+  collect_predictions() %>% 
+  group_by(id) %>% 
+  roc_curve(dataset, .pred_away:.pred_x_shape) %>% 
+  autoplot()
+```
+
+```{r}
+dino_rs %>% 
+  collect_predictions() %>% 
+  conf_mat(dataset, .pred_class) %>% 
+  autoplot(type = "heatmap")
+```
+
+```{r}
+dino_rs %>% 
+  collect_predictions() %>% 
+  filter(.pred_class != dataset) %>% 
+  conf_mat(dataset, .pred_class) %>% 
+  autoplot(type = "heatmap")
+```
+
+
+## Resources
+
+https://www.autodesk.com/research/publications/same-stats-different-graphs
+
+https://cran.r-project.org/web/packages/datasauRus/vignettes/Datasaurus.html
+
